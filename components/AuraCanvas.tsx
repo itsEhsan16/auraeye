@@ -3,11 +3,14 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import type { Aura } from "@/lib/aura/generate";
 import { AuraRenderer, PORTRAIT_LOOK, type AuraLook } from "@/lib/aura/renderer";
+import type { PersonCutout } from "@/lib/segment";
 
 interface AuraCanvasProps {
   photo: HTMLCanvasElement | null;
   aura: Aura;
   look?: AuraLook;
+  /** The person cut out of the photo; the background turns into the cloud whenever it arrives. */
+  cutout?: PersonCutout | null;
   /** "live" drifts continuously; "static" eases to a stop, then stops rendering. */
   mode: "live" | "static";
   /** Seconds for the colour to bleed in. 0 shows the finished aura at once. */
@@ -19,12 +22,15 @@ export function AuraCanvas({
   photo,
   aura,
   look = PORTRAIT_LOOK,
+  cutout = null,
   mode,
   revealDuration = 0,
   className = "",
 }: AuraCanvasProps) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const modeRef = useRef(mode);
+  const cutoutRef = useRef(cutout);
+  const rendererRef = useRef<AuraRenderer | null>(null);
   const startLoop = useRef<() => void>(() => {});
   const [failed, setFailed] = useState(false);
 
@@ -41,11 +47,15 @@ export function AuraCanvas({
     }
     renderer.setImage(photo);
     renderer.setAura(aura, look);
+    renderer.setCutout(cutoutRef.current);
+    rendererRef.current = renderer;
 
     const state = {
       time: (aura.seed % 1000) / 10,
       speed: modeRef.current === "live" ? 1 : 0,
       reveal: revealDuration > 0 ? 0 : 1,
+      // A cut-out that is already here shows at once; one that arrives later fades in.
+      maskMix: cutoutRef.current ? 1 : 0,
       startedAt: performance.now(),
       last: 0,
       raf: 0,
@@ -63,10 +73,17 @@ export function AuraCanvas({
         state.reveal = Math.min(1, (now - state.startedAt) / 1000 / revealDuration);
       }
 
-      renderer.resize();
-      renderer.render(state.time, state.reveal);
+      const maskTarget = cutoutRef.current ? 1 : 0;
+      const step = dt / 0.8;
+      state.maskMix =
+        Math.abs(maskTarget - state.maskMix) <= step
+          ? maskTarget
+          : state.maskMix + Math.sign(maskTarget - state.maskMix) * step;
 
-      if (!live && state.speed === 0 && state.reveal >= 1) {
+      renderer.resize();
+      renderer.render(state.time, state.reveal, state.maskMix);
+
+      if (!live && state.speed === 0 && state.reveal >= 1 && state.maskMix === maskTarget) {
         state.running = false;
         return;
       }
@@ -84,7 +101,7 @@ export function AuraCanvas({
 
     const observer = new ResizeObserver(() => {
       renderer.resize();
-      renderer.render(state.time, state.reveal);
+      renderer.render(state.time, state.reveal, state.maskMix);
     });
     observer.observe(canvas);
 
@@ -92,6 +109,7 @@ export function AuraCanvas({
       cancelAnimationFrame(state.raf);
       observer.disconnect();
       renderer.dispose();
+      rendererRef.current = null;
       startLoop.current = () => {};
     };
   }, [photo, aura, look, revealDuration]);
@@ -101,6 +119,11 @@ export function AuraCanvas({
     startLoop.current();
   }, [mode]);
 
+  useEffect(() => {
+    cutoutRef.current = cutout;
+    rendererRef.current?.setCutout(cutout);
+    startLoop.current();
+  }, [cutout]);
 
   if (failed) return <FallbackAura photo={photo} aura={aura} className={className} />;
 

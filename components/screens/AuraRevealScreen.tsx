@@ -9,8 +9,11 @@ import { BottomPanel, CircleAction, IconButton, TopBar } from "@/components/Scre
 import { Toast } from "@/components/Toast";
 import type { Aura } from "@/lib/aura/generate";
 import { stoneLabel } from "@/lib/aura/stones";
+import type { PersonCutout } from "@/lib/segment";
 
 const PROCESS_MS = 6000;
+/** If the cut-out is still loading after this, show the result without waiting longer. */
+const MAX_WAIT_MS = 12000;
 const STATUSES = [
   "READING YOUR ENERGY",
   "MAPPING YOUR BIOFIELD",
@@ -22,6 +25,9 @@ interface AuraRevealScreenProps {
   photo: HTMLCanvasElement;
   aura: Aura;
   date: string;
+  cutout: PersonCutout | null;
+  /** True while the person cut-out is still being worked out. */
+  cutoutPending: boolean;
   onClose: () => void;
   onRetake: () => void;
 }
@@ -30,17 +36,29 @@ interface AuraRevealScreenProps {
  * Processing and result share one screen so the canvas never remounts:
  * the aura bleeds in and drifts, then eases to a stop and the card details appear.
  */
-export function AuraRevealScreen({ photo, aura, date, onClose, onRetake }: AuraRevealScreenProps) {
-  const [done, setDone] = useState(false);
+export function AuraRevealScreen({
+  photo,
+  aura,
+  date,
+  cutout,
+  cutoutPending,
+  onClose,
+  onRetake,
+}: AuraRevealScreenProps) {
+  const [timeUp, setTimeUp] = useState(false);
+  const [gaveUp, setGaveUp] = useState(false);
   const [step, setStep] = useState(0);
   const [readingOpen, setReadingOpen] = useState(false);
   const [toast, setToast] = useState({ message: "", visible: false });
   const toastTimer = useRef<ReturnType<typeof setTimeout>>(undefined);
+  // Processing lasts PROCESS_MS, and a little longer on a first visit while the model loads.
+  const done = timeUp && (!cutoutPending || gaveUp);
 
   useEffect(() => {
     const stepMs = PROCESS_MS / STATUSES.length;
     const timers = STATUSES.slice(1).map((_, i) => setTimeout(() => setStep(i + 1), (i + 1) * stepMs));
-    timers.push(setTimeout(() => setDone(true), PROCESS_MS));
+    timers.push(setTimeout(() => setTimeUp(true), PROCESS_MS));
+    timers.push(setTimeout(() => setGaveUp(true), MAX_WAIT_MS));
     return () => {
       timers.forEach(clearTimeout);
       clearTimeout(toastTimer.current);
@@ -77,6 +95,7 @@ export function AuraRevealScreen({ photo, aura, date, onClose, onRetake }: AuraR
         <AuraCanvas
           photo={photo}
           aura={aura}
+          cutout={cutout}
           mode={done ? "static" : "live"}
           revealDuration={(PROCESS_MS - 600) / 1000}
         />

@@ -10,12 +10,13 @@ void main() {
 
 /**
  * The aura look, matched to the reference cards:
- *  1. a bounded, lumpy cloud of colour: dark band above it, thinning toward the
- *     sides, dark lower corners. Each stone owns a region inside it.
- *  2. the uploaded photo as it is (never darkened), tinted toward the aura
- *     colour inside the cloud with its brightness kept
- *  3. the cloud's glow screen-blended on top, capped so it never blows out,
- *     and a little lighter over the face
+ *  1. a bounded, lumpy, saturated cloud of colour: dark band above it, thinning
+ *     toward the sides, dark lower corners. Each stone owns a region inside it.
+ *  2. the person exactly as photographed (never darkened) on black: the
+ *     background drops away once the cut-out is ready (uMaskMix fades it in)
+ *  3. the cloud laid over everything, person included, a little fainter in
+ *     the middle over the face, so there is no visible cut-out edge
+ * Without a cut-out the whole photo stays, under the same cloud.
  *
  * Frame coordinates: p is 0→1 with y pointing down; q rescales y so both
  * axes are in frame-width units (circles stay round on any aspect).
@@ -38,6 +39,9 @@ uniform float uCount;
 uniform float uSeed;
 uniform vec2 uCloudCenter;
 uniform vec2 uCloudRadii;
+uniform sampler2D uMask;
+uniform float uMaskMix;
+uniform vec3 uFace;
 
 float hash(vec2 p) {
   vec3 p3 = fract(vec3(p.xyx) * 0.1031);
@@ -122,7 +126,7 @@ void main() {
   col /= max(wsum, 1e-6);
   // Keep the in-between blends as bright and saturated as the stones (no muddy middles).
   col *= (vsum / max(wsum, 1e-6)) / max(maxc(col), 1e-3);
-  col = clamp(mix(vec3(luma(col)), col, 1.2), 0.0, 1.0);
+  col = clamp(mix(vec3(luma(col)), col, 1.35), 0.0, 1.0);
 
   // The cloud: a bounded blob with big lumpy lobes, its lower half reaching a
   // little further. It blooms out from its centre as the colour arrives.
@@ -136,29 +140,36 @@ void main() {
   // Reveal: colour arrives in drifting patches.
   float n = fbm(q * 2.2 + s * 1.3);
   float rv = smoothstep(n * 0.6, n * 0.6 + 0.4, uReveal);
-  // Capped well below white, like the references (cloud brightness about 0.6–0.8).
-  vec3 glow = col * cloud * puff * rv * 0.72;
+  // The cloud's colour and density: deep and saturated, up to about full brightness.
+  vec3 aura = col * cloud * puff;
 
   if (uHasImage < 0.5) {
-    gl_FragColor = vec4(clamp(glow * 1.25 + (hash(gl_FragCoord.xy + fract(t * 7.0) * 113.0) - 0.5) * 0.03, 0.0, 1.0), 1.0);
+    gl_FragColor = vec4(clamp(aura * rv * 0.9 + (hash(gl_FragCoord.xy + fract(t * 7.0) * 113.0) - 0.5) * 0.03, 0.0, 1.0), 1.0);
     return;
   }
 
   // The uploaded photo exactly as it is: its own colours and brightness.
-  vec3 photo = texture2D(uImage, vUv * uCover.xy + uCover.zw).rgb;
-  float pl = luma(photo);
+  vec2 uvImg = vUv * uCover.xy + uCover.zw;
+  vec3 photo = texture2D(uImage, uvImg).rgb;
 
-  // A little less aura on the face: a broad, gentle dip (never a hole) where the
-  // face sits in a typical selfie, so the colour hangs around the head instead.
-  float fd = length((q - vec2(0.5, 0.53 / aspect)) / vec2(1.0, 1.25));
-  float onFace = 1.0 - 0.55 * (1.0 - smoothstep(0.08, 0.34, fd));
+  // The person on black: the room drops away as the colour arrives (once the cut-out
+  // is ready; without one the whole photo counts as the person). The mask arrives
+  // already softened (lib/segment.ts), so it is used as is.
+  float m = texture2D(uMask, uvImg).r;
+  float person = mix(1.0, m, uMaskMix);
+  vec3 base = photo * mix(1.0, person, rv);
 
-  // Aura colour without darkening anything: a tint that keeps each pixel's brightness,
-  // then the cloud's light screen-blended on top (screen only ever brightens). The glow
-  // eases off on light areas so faces and pale walls keep their detail.
-  vec3 tinted = mix(photo, setLum(col, pl), rv * cloud * 0.45 * onFace);
-  vec3 g = glow * onFace * mix(1.0, 0.6, pl);
-  vec3 color = 1.0 - (1.0 - tinted) * (1.0 - g);
+  // The cloud lies over everything, person included, so no cut-out edge shows. It is
+  // a little fainter in the middle, over the face (uFace: centre, then radius in
+  // frame-width units). This fade follows position only, never the outline.
+  float fd = length((q - vec2(uFace.x, uFace.y / aspect)) / vec2(1.0, 1.25)) / uFace.z;
+  float middle = 1.0 - 0.65 * (1.0 - smoothstep(0.24, 1.0, fd));
+  vec3 layer = aura * 0.95 * middle * rv;
+
+  // A light tint where the cloud covers the person (it keeps their brightness), then the
+  // cloud's light screen-blended on top: screen only ever brightens, so nothing darkens.
+  vec3 tinted = mix(base, setLum(col, luma(base)), cloud * middle * rv * 0.35);
+  vec3 color = 1.0 - (1.0 - tinted) * (1.0 - layer);
 
   color += (hash(gl_FragCoord.xy + fract(t * 7.0) * 113.0) - 0.5) * 0.03;
 

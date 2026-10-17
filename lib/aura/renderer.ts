@@ -1,3 +1,4 @@
+import type { PersonCutout } from "@/lib/segment";
 import type { Aura, FramePoint } from "./generate";
 import { FRAGMENT_SHADER, VERTEX_SHADER } from "./shader";
 import { hexToRgb } from "./stones";
@@ -16,6 +17,9 @@ export interface AuraLook {
  */
 export const PORTRAIT_LOOK: AuraLook = { cloudCenter: [0.5, 0.47], cloudRadii: [0.6, 0.62] };
 
+/** Where the face usually sits in a selfie, until a cut-out says otherwise. */
+const DEFAULT_FACE: PersonCutout["face"] = [0.5, 0.53, 0.34];
+
 const UNIFORMS = [
   "uImage",
   "uHasImage",
@@ -30,6 +34,9 @@ const UNIFORMS = [
   "uSeed",
   "uCloudCenter",
   "uCloudRadii",
+  "uMask",
+  "uMaskMix",
+  "uFace",
 ] as const;
 
 type UniformName = (typeof UNIFORMS)[number];
@@ -51,11 +58,13 @@ export class AuraRenderer {
   private gl: WebGLRenderingContext;
   private program: WebGLProgram | null = null;
   private texture: WebGLTexture | null = null;
+  private maskTexture: WebGLTexture | null = null;
   private loc = {} as Record<UniformName, WebGLUniformLocation | null>;
   private image: TexImageSource | null = null;
   private imageSize: [number, number] = [1, 1];
   private aura: Aura | null = null;
   private look: AuraLook = PORTRAIT_LOOK;
+  private cutout: PersonCutout | null = null;
   private lost = false;
 
   constructor(private canvas: HTMLCanvasElement) {
@@ -83,6 +92,7 @@ export class AuraRenderer {
     this.lost = false;
     this.init();
     if (this.image) this.uploadImage();
+    if (this.cutout) this.uploadMask();
   };
 
   private init() {
@@ -107,15 +117,21 @@ export class AuraRenderer {
 
     for (const name of UNIFORMS) this.loc[name] = gl.getUniformLocation(program, name);
 
-    this.texture = gl.createTexture();
-    gl.bindTexture(gl.TEXTURE_2D, this.texture);
-    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
-    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
-    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
-    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
-    // A 1×1 placeholder until a photo arrives (the intro has none), so the texture is always complete.
-    gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGB, 1, 1, 0, gl.RGB, gl.UNSIGNED_BYTE, new Uint8Array(3));
+    const makeTexture = () => {
+      const texture = gl.createTexture();
+      gl.bindTexture(gl.TEXTURE_2D, texture);
+      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
+      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
+      // A 1×1 placeholder until real data arrives (the intro has no photo), so the texture is always complete.
+      gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGB, 1, 1, 0, gl.RGB, gl.UNSIGNED_BYTE, new Uint8Array(3));
+      return texture;
+    };
+    this.texture = makeTexture();
+    this.maskTexture = makeTexture();
     gl.uniform1i(this.loc.uImage, 0);
+    gl.uniform1i(this.loc.uMask, 1);
   }
 
   setImage(image: HTMLCanvasElement | null) {
@@ -138,6 +154,19 @@ export class AuraRenderer {
     this.look = look;
   }
 
+  /** The person cut-out: the background turns into the cloud as maskMix (see render) goes 0 → 1. */
+  setCutout(cutout: PersonCutout | null) {
+    this.cutout = cutout;
+    if (cutout) this.uploadMask();
+  }
+
+  private uploadMask() {
+    const { gl } = this;
+    gl.bindTexture(gl.TEXTURE_2D, this.maskTexture);
+    gl.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL, true);
+    gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGB, gl.RGB, gl.UNSIGNED_BYTE, this.cutout!.mask);
+  }
+
   /** Matches the drawing buffer to the canvas' CSS size. */
   resize(maxDpr = 2) {
     const dpr = Math.min(window.devicePixelRatio || 1, maxDpr);
@@ -149,7 +178,8 @@ export class AuraRenderer {
     }
   }
 
-  render(time: number, reveal: number) {
+  /** maskMix: 0 = no cut-out (aura over the whole photo), 1 = background fully replaced by the cloud. */
+  render(time: number, reveal: number, maskMix: number) {
     const { gl, aura, loc } = this;
     if (this.lost || !this.program || !aura) return;
     const { width, height } = this.canvas;
@@ -183,8 +213,16 @@ export class AuraRenderer {
     gl.uniform2f(loc.uCloudCenter, ...this.look.cloudCenter);
     gl.uniform2f(loc.uCloudRadii, ...this.look.cloudRadii);
 
+    const mix = this.cutout ? maskMix : 0;
+    const face = this.cutout?.face ?? DEFAULT_FACE;
+    const lerp = (i: number) => DEFAULT_FACE[i] + (face[i] - DEFAULT_FACE[i]) * mix;
+    gl.uniform1f(loc.uMaskMix, mix);
+    gl.uniform3f(loc.uFace, lerp(0), lerp(1), lerp(2));
+
     gl.activeTexture(gl.TEXTURE0);
     gl.bindTexture(gl.TEXTURE_2D, this.texture);
+    gl.activeTexture(gl.TEXTURE1);
+    gl.bindTexture(gl.TEXTURE_2D, this.maskTexture);
     gl.drawArrays(gl.TRIANGLES, 0, 3);
   }
 
@@ -192,6 +230,7 @@ export class AuraRenderer {
     this.canvas.removeEventListener("webglcontextlost", this.onLost);
     this.canvas.removeEventListener("webglcontextrestored", this.onRestored);
     if (this.texture) this.gl.deleteTexture(this.texture);
+    if (this.maskTexture) this.gl.deleteTexture(this.maskTexture);
     if (this.program) this.gl.deleteProgram(this.program);
   }
 }

@@ -8,11 +8,22 @@ import { IntroScreen } from "@/components/screens/IntroScreen";
 import { generateAura, type Aura, type ColorCount } from "@/lib/aura/generate";
 import { formatAuraDate } from "@/lib/format";
 import { loadPhotoFile, photoSeed } from "@/lib/image";
+import { cutOutPerson, preloadSegmenter, type PersonCutout } from "@/lib/segment";
 
 type View =
   | { name: "intro" }
   | { name: "camera" }
-  | { name: "reveal"; photo: HTMLCanvasElement; aura: Aura; date: string };
+  | {
+      name: "reveal";
+      photo: HTMLCanvasElement;
+      aura: Aura;
+      date: string;
+      cutout: PersonCutout | null;
+      cutoutPending: boolean;
+    };
+
+/** Starts fetching the cut-out model in the background; a failure just means no cut-out later. */
+const warmUpModel = () => void preloadSegmenter().catch(() => {});
 
 export function AuraApp() {
   const [view, setView] = useState<View>({ name: "intro" });
@@ -27,7 +38,17 @@ export function AuraApp() {
       photo,
       aura: generateAura(photoSeed(photo), colors),
       date: formatAuraDate(new Date()),
+      cutout: null,
+      cutoutPending: true,
     });
+    cutOutPerson(photo).then((cutout) =>
+      setView((v) => (v.name === "reveal" && v.photo === photo ? { ...v, cutout, cutoutPending: false } : v)),
+    );
+  };
+
+  const askColors = (source: "camera" | "gallery") => {
+    warmUpModel();
+    setChoosingFor(source);
   };
 
   const pickPhoto = () => galleryInput.current?.click();
@@ -49,7 +70,7 @@ export function AuraApp() {
   return (
     <main className="relative h-full w-full select-none overflow-hidden bg-black text-white">
       {view.name === "intro" && (
-        <IntroScreen onStart={() => setChoosingFor("camera")} onPickPhoto={() => setChoosingFor("gallery")} />
+        <IntroScreen onStart={() => askColors("camera")} onPickPhoto={() => askColors("gallery")} />
       )}
       {view.name === "camera" && (
         <CameraScreen
@@ -65,6 +86,8 @@ export function AuraApp() {
           photo={view.photo}
           aura={view.aura}
           date={view.date}
+          cutout={view.cutout}
+          cutoutPending={view.cutoutPending}
           onClose={() => setView({ name: "intro" })}
           onRetake={() => setView({ name: "camera" })}
         />
