@@ -12,9 +12,10 @@ void main() {
  * The aura look, matched to the reference cards:
  *  1. a bounded, lumpy cloud of colour: dark band above it, thinning toward the
  *     sides, dark lower corners. Each stone owns a region inside it.
- *  2. the photo, high-contrast and nearly grayscale, tinted with the aura colour
- *     and dimmed outside the cloud (the room stays, just dark)
- *  3. the cloud's glow screen-blended on top, capped so it never blows out
+ *  2. the uploaded photo as it is (never darkened), tinted toward the aura
+ *     colour inside the cloud with its brightness kept
+ *  3. the cloud's glow screen-blended on top, capped so it never blows out,
+ *     and a little lighter over the face
  *
  * Frame coordinates: p is 0→1 with y pointing down; q rescales y so both
  * axes are in frame-width units (circles stay round on any aspect).
@@ -75,6 +76,17 @@ float luma(vec3 c) {
   return dot(c, vec3(0.299, 0.587, 0.114));
 }
 
+// Hue and saturation of c at luminance l ("color" blend): tints without changing brightness.
+vec3 setLum(vec3 c, float l) {
+  c += l - luma(c);
+  float L = luma(c);
+  float n = min(min(c.r, c.g), c.b);
+  float x = maxc(c);
+  if (n < 0.0) c = L + (c - L) * L / (L - n);
+  if (x > 1.0) c = L + (c - L) * (1.0 - L) / (x - L);
+  return c;
+}
+
 void main() {
   float aspect = uResolution.x / uResolution.y;
   vec2 p = vec2(vUv.x, 1.0 - vUv.y);
@@ -132,23 +144,21 @@ void main() {
     return;
   }
 
-  // Photo: high-contrast, mostly desaturated (a hint of the original colour survives).
+  // The uploaded photo exactly as it is: its own colours and brightness.
   vec3 photo = texture2D(uImage, vUv * uCover.xy + uCover.zw).rgb;
-  float l0 = luma(photo);
-  float L = pow(smoothstep(0.03, 0.95, l0), 1.15);
-  vec3 src = mix(vec3(L), photo * (L / max(l0, 0.001)), 0.25);
+  float pl = luma(photo);
 
-  // How much of the photo shows once the colour arrives: inside the cloud, and the
-  // lower middle where shoulders usually are. The band above the cloud and the
-  // corners fall to near black; the room is kept, just dark.
-  float ed = min(min(p.x, 1.0 - p.x), min(p.y, 1.0 - p.y));
-  float body = 1.0 - smoothstep(0.45, 0.85, length((p - vec2(0.5, 0.7)) * vec2(1.0, 1.4)));
-  float show = max(cloud, body) * mix(0.35, 1.0, smoothstep(0.0, 0.25, ed));
-  float dim = mix(0.15, 0.55, show);
+  // A little less aura on the face: a broad, gentle dip (never a hole) where the
+  // face sits in a typical selfie, so the colour hangs around the head instead.
+  float fd = length((q - vec2(0.5, 0.53 / aspect)) / vec2(1.0, 1.25));
+  float onFace = 1.0 - 0.55 * (1.0 - smoothstep(0.08, 0.34, fd));
 
-  // Tint multiply-style (aura colour × photo light), so the photo's light and shade stay readable.
-  vec3 layer = mix(src, col * L, rv * 0.9) * mix(1.0, dim, rv);
-  vec3 color = 1.0 - (1.0 - layer) * (1.0 - glow);
+  // Aura colour without darkening anything: a tint that keeps each pixel's brightness,
+  // then the cloud's light screen-blended on top (screen only ever brightens). The glow
+  // eases off on light areas so faces and pale walls keep their detail.
+  vec3 tinted = mix(photo, setLum(col, pl), rv * cloud * 0.45 * onFace);
+  vec3 g = glow * onFace * mix(1.0, 0.6, pl);
+  vec3 color = 1.0 - (1.0 - tinted) * (1.0 - g);
 
   color += (hash(gl_FragCoord.xy + fract(t * 7.0) * 113.0) - 0.5) * 0.03;
 
