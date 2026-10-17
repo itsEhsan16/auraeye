@@ -1,0 +1,177 @@
+@import "tailwindcss";
+
+@theme {
+  --font-sans: var(--font-montserrat), ui-sans-serif, system-ui, sans-serif;
+
+  --color-panel-from: #0a133e;
+  --color-panel-mid: #1b1036;
+  --color-panel-to: #2c0c22;
+
+  --animate-fade-in: fade-in 0.7s ease both;
+  --animate-rise-in: rise-in 0.8s cubic-bezier(0.2, 0.7, 0.2, 1) both;
+  --animate-flash: flash 0.45s ease-out both;
+  --animate-scan: scan 2.4s ease-in-out infinite;
+
+  @keyframes fade-in {
+    from {
+      opacity: 0;
+    }
+    to {
+      opacity: 1;
+    }
+  }
+  @keyframes rise-in {
+    from {
+      opacity: 0;
+      transform: translateY(10px);
+    }
+    to {
+      opacity: 1;
+      transform: translateY(0);
+    }
+  }
+  @keyframes flash {
+    from {
+      opacity: 0.9;
+    }
+    to {
+      opacity: 0;
+    }
+  }
+  @keyframes scan {
+    0% {
+      transform: translateY(-10%);
+      opacity: 0;
+    }
+    15%,
+    85% {
+      opacity: 1;
+    }
+    100% {
+      transform: translateY(1000%);
+      opacity: 0;
+    }
+  }
+  @keyframes progress {
+    from {
+      transform: scaleX(0);
+    }
+    to {
+      transform: scaleX(1);
+    }
+  }
+}
+
+:root {
+  color-scheme: dark;
+  --safe-top: env(safe-area-inset-top, 0px);
+  --safe-bottom: env(safe-area-inset-bottom, 0px);
+}
+
+html,
+body {
+  height: 100%;
+  background: #000;
+  color: #fff;
+}
+
+body {
+  overscroll-behavior: none;
+  -webkit-tap-highlight-color: transparent;
+  -webkit-font-smoothing: antialiased;
+}
+
+.panel-gradient {
+  background: linear-gradient(
+    90deg,
+    var(--color-panel-from) 0%,
+    var(--color-panel-mid) 55%,
+    var(--color-panel-to) 100%
+  );
+}
+
+/* ---------- Phone frame ----------
+   On phones the app simply fills the screen. On a laptop or desktop it sits
+   inside an iPhone-style frame so the prototype can be pitched as-is. */
+
+.stage {
+  position: fixed;
+  inset: 0;
+  background: #000;
+}
+
+.device,
+.device-screen {
+  position: absolute;
+  inset: 0;
+  overflow: hidden;
+  background: #000;
+}
+
+.device-chrome,
+.stage-caption {
+  display: none;
+}
+
+@media (min-width: 768px) and (pointer: fine) {
+  .stage {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 20px;
+    background: radial-gradient(ellipse at 50% 40%, #161020 0%, #060508 55%, #000 100%);
+  }
+
+  .device {
+    position: relative;
+    inset: auto;
+    overflow: visible;
+    height: min(844px, calc(100dvh - 88px));
+    aspect-ratio: 390 / 844;
+    padding: 12px;
+    border-radius: 58px;
+    background: linear-gradient(150deg, #33413a 0%, #121813 38%, #0c100d 62%, #2a352f 100%);
+    box-shadow:
+      inset 0 0 0 1.5px #46564c,
+      inset 0 0 0 4px #0a0d0b,
+      0 50px 120px rgba(0, 0, 0, 0.75),
+      0 0 120px rgba(140, 70, 190, 0.1);
+  }
+
+  /* Side buttons */
+  .device::before,
+  .device::after {
+    content: "";
+    position: absolute;
+    width: 4px;
+    border-radius: 2px;
+    background: #2b3530;
+  }
+  .device::before {
+    left: -3px;
+    top: 19%;
+    height: 12%;
+    box-shadow: 0 -60px 0 -8px #2b3530;
+  }
+  .device::after {
+    right: -3px;
+    top: 26%;
+    height: 11%;
+  }
+
+  .device-screen {
+    position: relative;
+    inset: auto;
+    width: 100%;
+    height: 100%;
+    border-radius: 46px;
+    --safe-top: 44px;
+    --safe-bottom: 22px;
+  }
+
+  .device-chrome,
+  .stage-caption {
+    display: block;
+  }
+}
